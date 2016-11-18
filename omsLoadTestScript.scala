@@ -10,14 +10,14 @@ import java.util.concurrent.ThreadLocalRandom
 class OMSLoadTestSimulation extends Simulation {
 	object Config {
 		val CONCURRENT_USERS_PER_SECOND = System.getProperty("currentUserPerSecond", "5").toDouble
-		val LOAD_TEST_DURATION = System.getProperty("loadTestDuration", "20").toDouble //minutes
-		val THINK_TIME_DEFAULT_SECONDS = Integer.getInteger("thinkTime", 10).toInt
+		val LOAD_TEST_DURATION = System.getProperty("loadTestDuration", "5").toDouble //minutes
+		val THINK_TIME_DEFAULT_SECONDS = Integer.getInteger("thinkTime", 5).toInt
 		
 		val SERVER = System.getProperty("server", "electronics.local")
 		val CONTEXT = System.getProperty("context", "/yacceleratorstorefront/electronics/en/")
 		val PAYMENTMOCKROOT = System.getProperty("paymentMock", "/acceleratorservices/")
-		val HTTP_PORT = Integer.getInteger("httpPort", 9001).toInt
-		val HTTPS_PORT = Integer.getInteger("httpsPort", 9002).toInt
+		val HTTP_PORT = Integer.getInteger("httpPort", 80).toInt
+		val HTTPS_PORT = Integer.getInteger("httpsPort", 443).toInt
 		
 		def serverHttpUrl(): String = {"http://" + SERVER + ":" + HTTP_PORT}
 		def serverHttpsUrl(): String = {"https://" + SERVER + ":" + HTTPS_PORT}
@@ -43,8 +43,8 @@ class OMSLoadTestSimulation extends Simulation {
 			return myBuilder
 		}
 		val allLocalAddrs = csv("localaddress.csv").convert{case("localaddr",attrval) => appendStringBuilder(attrval)}
-		println(allLocalAddrs.toString())
-		val HTTP_PROTOCOL = http.localAddresses(allLocalAddrs.toString()).userAgentHeader("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.102 Safari/537.36")
+		println(myBuilder.toString())
+		val HTTP_PROTOCOL = http.localAddresses("127.0.1.1","127.0.2.1","127.0.3.1").userAgentHeader("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.102 Safari/537.36")
 	}
 	
 	object FeedUtil {
@@ -133,6 +133,16 @@ class OMSLoadTestSimulation extends Simulation {
 					.pause(Config.THINK_TIME_DEFAULT_SECONDS - 1, Config.THINK_TIME_DEFAULT_SECONDS + 1)
 					
 	}
+
+
+    object ProdDtl {
+		val feeder = csv("cartprod.csv").random
+        var dispProds = feed(feeder)
+                 		.exec(session => session.remove("CSRFToken"))
+                        .exec(http("Prod Detail Page").get(Config.serverRootHttpsUrl + "p/${product_code}").headers(Config.HTML_HEADER).check(PageRequest.selectValidProd).check(PageRequest.selectCSRFToken))
+
+    }
+ 
 	
 	
 	object AddToCart {
@@ -291,7 +301,7 @@ class OMSLoadTestSimulation extends Simulation {
 	val scn = scenario("OMS Load Test Scenario")
 			  .exec(Login.login)
 			  .doIf("${loginSuccess.exists()}") {
-				repeat(1) {exec(AddToCart.addToCart)}
+				repeat(3) {exec(AddToCart.addToCart)}
 				.exec(Checkout.startExpCheckout)
 				.exec(Checkout.expressCheckout)
 				.exec(Checkout.confirmPlaceOrder)
@@ -304,12 +314,21 @@ class OMSLoadTestSimulation extends Simulation {
 		session
 	}
 	*/
+
+       
+        val scn = scenario("OMS Load Test Scenario")
+                          .exec(Login.login)
+                          .doIf("${loginSuccess.exists()}") {
+                                exec(ProdDtl.dispProds)
+                          }
+        
+
 	
-		
+	/*	
 	val scn = scenario("OMS Load Test Scenario")
 			  .exec(Login.login)
 			  .doIf("${loginSuccess.exists()}") {
-				repeat(1) {exec(AddToCart.addToCart)}
+				repeat(3) {exec(AddToCart.addToCart)}
 				.exec(Checkout.loadAddressData)
 				.exec(Checkout.loadCardData)
 				.exec(Checkout.startCheckout)
@@ -319,13 +338,13 @@ class OMSLoadTestSimulation extends Simulation {
 				.exec(Checkout.postSopResp)
 				.exec(Checkout.confirmPlaceOrder)
 			  }	 	
-			  
+	*/		  
 	
 	setUp(
 		
 			scn.inject(
-			atOnceUsers(1)
-			/* constantUsersPerSec(Config.CONCURRENT_USERS_PER_SECOND) during(Config.LOAD_TEST_DURATION minutes) */
+			/* atOnceUsers(1) */
+			    constantUsersPerSec(Config.CONCURRENT_USERS_PER_SECOND) during(Config.LOAD_TEST_DURATION minutes)
 			).protocols(Config.HTTP_PROTOCOL)
 		
 		
