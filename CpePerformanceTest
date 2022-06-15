@@ -1,0 +1,110 @@
+package cpe
+
+import scala.concurrent.duration._
+
+import io.gatling.core.Predef._
+import io.gatling.http.Predef._
+import io.gatling.commons.validation._
+import io.gatling.http.check.HttpCheck
+import java.util.concurrent.ThreadLocalRandom
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.UUID
+
+
+class CpePerformanceTest extends Simulation {
+	object Config {
+		val cnDevRootUrl = "https://serviceportal-dev"	
+		val cnProdRootUrl = "https://serviceportaln"
+		val oauthTokenHttpUrl = "https:///oauth2/token"
+		val cpeHapiDevUrl = "https://qa-cn/common-price-engine/v1/pricecalculate"
+		val cpeHapiProdUrl = "https://common-price-engine-cn/v1/pricecalculate"
+		val HTTP_PROTOCOL = http							  
+	}
+	
+	object DataLoader {
+		val allNonPromotionProducts = csv("cpe_dev_nopromotionprodid.csv").batch
+		val allPromotionProducts = csv("cpe_dev_promotionprodid.csv").batch
+		val allHapiOauthConfig = csv("hapi_dev_oauth.csv").batch
+	}
+	
+	object ResponseVerification {
+		def checkCpeNonPromoOK(): HttpCheck = {
+			status.is(200)
+			xpath("//cpens:RetailPriceModifier/cpens:PriceDerivationRule", Map("cpens" -> "http://www.sap.com/IXRetail/namespace/")).notExists
+		}
+		
+		def checkCpePromotionOK(): HttpCheck = {
+			status.is(200)
+			xpath("//cpens:RetailPriceModifier/cpens:PriceDerivationRule", Map("cpens" -> "http://www.sap.com/IXRetail/namespace/")).find
+		}
+	}
+	
+	object OauthResult {
+		def extractToken(): HttpCheck = {
+			status.is(200)
+			jsonPath("$.access_token").saveAs("oauthClientSecret")
+		}
+	}
+	
+	
+	
+	object CpeDataHandler {	
+		val sendHapiNonPromoRequestAndVerify = exec(http("Send Cpe Non Promotion Data").post(Config.cpeHapiDevUrl)
+		.headers( Map("""Content-Type""" -> """application/xml""",
+		              """Authorization""" -> """Bearer ${oauthClientSecret}""",
+					  """HAPI-Unique-Transaction-ID""" -> UUID.randomUUID().toString(),
+					  """Ocp-Apim-Subscription-Key""" -> """${subscriptionKey}"""
+					 ) )
+		.body(ElFileBody("cpe_promotion.tplt")).asXml
+		.check(ResponseVerification.checkCpeNonPromoOK()))
+		
+		val sendHapiPromotionRequestAndVerify = exec(http("Send Cpe Promotion Data").post(Config.cpeHapiDevUrl)
+		.headers( Map("""Content-Type""" -> """application/xml""",
+		              """Authorization""" -> """Bearer ${oauthClientSecret}""",
+					  """HAPI-Unique-Transaction-ID""" -> UUID.randomUUID().toString(),
+					  """Ocp-Apim-Subscription-Key""" -> """${subscriptionKey}"""
+					  ) )
+		.body(ElFileBody("cpe_promotion.tplt")).asXml
+		.check(ResponseVerification.checkCpePromotionOK()))
+	
+	
+		val obtainOauthToken = exec(http("Send Oauth token").post(Config.oauthTokenHttpUrl)
+		.headers( Map("""Content-Type""" -> """application/x-www-form-urlencoded""") )
+		.formParam("grant_type", "client_credentials")
+		.formParam("client_id", "${oauthClientId}")
+		.formParam("client_secret", "${oauthClientSecret}")
+		.formParam("resource", "${oauthResource}")
+		.check(OauthResult.extractToken()))
+	}
+	
+	val scn = scenario("Cpe Load Test Scenario")
+	          .feed(DataLoader.allHapiOauthConfig.random)
+			  .exec(CpeDataHandler.obtainOauthToken) 	
+			  .repeat(10) {
+				feed(DataLoader.allPromotionProducts.random)
+				.exec { session =>
+				    val currentDate = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX").format(new Date())
+					val messageId = UUID.randomUUID().toString().replace("-", "")
+					val transactionId = UUID.randomUUID().toString().replace("-", "")
+					val newSession = session.setAll(Map("sourceSystemId" -> "Q10CLNT100",
+														"storeId" -> "CN0187",
+					                                    "messageId" -> messageId,
+														"transactionId" -> transactionId, 
+														"requestDateTime" -> currentDate						
+					                                   ))
+					newSession
+				}
+				.exec(CpeDataHandler.sendHapiNonPromoRequestAndVerify)
+				.pause(1 seconds, 2 seconds)
+			  }	
+			  
+			  
+	
+	setUp(
+		scn.inject(
+			atOnceUsers(400)
+		)
+	).protocols(Config.HTTP_PROTOCOL)		
+	
+}
