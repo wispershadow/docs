@@ -59,6 +59,14 @@ class CpePerformanceTest extends Simulation {
 		.body(ElFileBody("cpe_promotion.tplt")).asXml
 		.check(ResponseVerification.checkCpeNonPromoOK()))
 		
+		/*
+		template variable use ${}
+		<PriceCalculateBody TransactionType="SaleTransaction" NetPriceFlag="false">
+                   <TransactionID>${transactionId}</TransactionID>
+                   <DateTime>${requestDateTime}</DateTime>
+		</PriceCalculateBody>   
+		*/
+		
 		val sendHapiPromotionRequestAndVerify = exec(http("Send Cpe Promotion Data").post(Config.cpeHapiDevUrl)
 		.headers( Map("""Content-Type""" -> """application/xml""",
 		              """Authorization""" -> """Bearer ${oauthClientSecret}""",
